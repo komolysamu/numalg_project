@@ -1,0 +1,139 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+# Egyelőre csak példaadatok.
+params = {
+    "mass": 500.0,
+    "area": 17.0,
+    "rho": 1.225,
+    "g": 9.81,
+    "cl_ground": 1.0,
+    "cd0": 0.018,
+    "k": 0.025,
+    "wind": 3.0,
+    "distance": 1000.0,
+    "ground_acc": 2.0,
+    "rolling": 0.03,
+    "max_force": 6500.0,
+    "max_power": 200000.0,
+    "dt": 0.02,
+    "max_time": 60.0,
+}
+
+
+def aerodynamic_forces(speed, p):
+    airspeed = max(speed + p["wind"], 0.0)
+    q = 0.5 * p["rho"] * airspeed**2
+
+    cl = p["cl_ground"]
+    cd = p["cd0"] + p["k"] * cl**2
+
+    lift = q * p["area"] * cl
+    drag = q * p["area"] * cd
+
+    return airspeed, lift, drag
+
+
+def ground_forces(speed, p):
+    airspeed, lift, drag = aerodynamic_forces(speed, p)
+    weight = p["mass"] * p["g"]
+
+    friction = p["rolling"] * max(weight - lift, 0.0)
+    tension = p["mass"] * p["ground_acc"] + drag + friction
+    power = tension * speed
+
+    return airspeed, lift, tension, power
+
+
+def simulate_ground(p):
+    if p["dt"] <= 0 or p["ground_acc"] <= 0:
+        raise ValueError("Time step and acceleration must be positive.")
+
+    if p["wind"] < 0:
+        raise ValueError("This version supports headwind or calm air.")
+
+    t = 0.0
+    x = 0.0
+    speed = 0.0
+    history = []
+
+    weight = p["mass"] * p["g"]
+    lift_off_airspeed = np.sqrt(
+        2 * weight / (p["rho"] * p["area"] * p["cl_ground"])
+    )
+    lift_off_speed = lift_off_airspeed - p["wind"]
+
+    if lift_off_speed <= 0:
+        raise ValueError("Wind is too strong for this ground model.")
+
+    while True:
+        airspeed, lift, tension, power = ground_forces(speed, p)
+        history.append([t, x, speed, airspeed, lift, tension, power])
+
+        if tension > p["max_force"]:
+            status = "Winch force limit exceeded"
+            break
+
+        if power > p["max_power"]:
+            status = "Winch power limit exceeded"
+            break
+
+        if x >= p["distance"]:
+            status = "Reached the winch before lift-off"
+            break
+
+        if speed >= lift_off_speed - 1e-9:
+            status = "Lift-off"
+            break
+
+        if t >= p["max_time"]:
+            status = "Time limit reached"
+            break
+
+        remaining = (lift_off_speed - speed) / p["ground_acc"]
+        dt = min(p["dt"], remaining, p["max_time"] - t)
+
+        # Euler-lépés a földi mozgásra.
+        x += speed * dt
+        speed += p["ground_acc"] * dt
+        t += dt
+
+    return np.array(history), status
+
+
+def plot_results(data):
+    t = data[:, 0]
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    axes[0].plot(t, data[:, 2], label="Ground speed")
+    axes[0].plot(t, data[:, 3], label="Airspeed")
+    axes[0].set_ylabel("Speed (m/s)")
+    axes[0].legend()
+
+    axes[1].plot(t, data[:, 1])
+    axes[1].set_ylabel("Distance (m)")
+
+    for ax in axes:
+        ax.set_xlabel("Time (s)")
+        ax.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def main():
+    data, status = simulate_ground(params)
+
+    print("Status:", status)
+    print(f"Time: {data[-1, 0]:.2f} s")
+    print(f"Distance: {data[-1, 1]:.2f} m")
+    print(f"Ground speed: {data[-1, 2]:.2f} m/s")
+    print(f"Airspeed: {data[-1, 3]:.2f} m/s")
+
+    plot_results(data)
+
+
+if __name__ == "__main__":
+    main()
